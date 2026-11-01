@@ -154,8 +154,24 @@ async function start() {
 
       const names = document.createElement("div");
       names.className = "names";
-      if (it.ar) { const a = document.createElement("div"); a.className = "ar"; a.textContent = it.ar; names.appendChild(a); }
-      if (it.en) { const en = document.createElement("div"); en.className = "en"; en.textContent = it.en; names.appendChild(en); }
+      if (it.ar) {
+        const a = document.createElement("span");
+        a.className = "ar";
+        a.textContent = it.ar;
+        names.appendChild(a);
+      }
+      if (it.ar && it.en) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "-";
+        names.appendChild(sep);
+      }
+      if (it.en) {
+        const en = document.createElement("span");
+        en.className = "en";
+        en.textContent = it.en;
+        names.appendChild(en);
+      }
       li.appendChild(names);
 
       const box = document.createElement("div");

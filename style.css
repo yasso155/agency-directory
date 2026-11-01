@@ -385,8 +385,9 @@ li.row.expanded {
 .names {
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .ar {
@@ -397,14 +398,20 @@ li.row.expanded {
   line-height: 1.35;
 }
 
+.names .sep {
+  color: var(--muted);
+  opacity: 0.5;
+  user-select: none;
+  font-size: 0.95rem;
+}
+
 .en {
   color: var(--muted);
   direction: ltr;
-  text-align: start;
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
   overflow-wrap: anywhere;
-  font-size: 0.88rem;
-  line-height: 1.25;
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .idbox {
