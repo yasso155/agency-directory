@@ -35,7 +35,7 @@ async function start() {
   let loaded = false;
   let firstSnap = true;
 
-  /* ---------- helpers ---------- */
+  /* ---------- دوال مساعدة ---------- */
   const norm = (s) =>
     String(s || "").toLowerCase()
       .replace(/[ً-ٰٟـ]/g, "")
@@ -65,12 +65,12 @@ async function start() {
 
   const errText = (e) => {
     const c = e && e.code;
-    if (c === "permission-denied") return "ما عندك صلاحية الوصول لقاعدة البيانات. تأكد من Firestore Rules.";
-    if (c === "unavailable") return "ما في اتصال بالإنترنت، جرّب تاني.";
-    return "ما اتحفظ، جرّب تاني.";
+    if (c === "permission-denied") return "ليس لديك صلاحية الوصول إلى قاعدة البيانات. يُرجى مراجعة إعدادات الأمان.";
+    if (c === "unavailable") return "تعذر الاتصال بالخادم، يُرجى التحقق من اتصالك بالإنترنت.";
+    return "حدث خطأ أثناء تنفيذ العملية، يُرجى المحاولة مرة أخرى.";
   };
 
-  /* ---------- render ---------- */
+  /* ---------- عرض البيانات (Render) ---------- */
   function render() {
     const list = $("list");
     list.textContent = "";
@@ -79,17 +79,35 @@ async function start() {
       !nq || norm(it.ar).includes(nq) || norm(it.en).includes(nq) || norm(it.id).includes(nq));
     shown.sort((a, b) => (a.ar || a.en || "").localeCompare(b.ar || b.en || "", "ar"));
 
-    $("count").textContent = !loaded ? "" : (nq ? `${shown.length} من ${items.length}` : `${items.length} وكالة`);
+    if (!loaded) {
+      $("count").textContent = "جارٍ التحميل...";
+    } else if (nq) {
+      $("count").textContent = `عرض ${shown.length} من أصل ${items.length} وكالة`;
+    } else {
+      $("count").textContent = items.length === 0 ? "لا توجد وكالات" : `${items.length} وكالة مسجلة`;
+    }
 
     if (!shown.length) {
       const e = document.createElement("li");
       e.className = "empty";
+      
+      const iconWrap = document.createElement("div");
+      iconWrap.className = "empty-icon";
+      iconWrap.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`;
+
       const s = document.createElement("strong");
       const p = document.createElement("span");
-      if (!loaded) s.textContent = "جاري التحميل…";
-      else if (!items.length) { s.textContent = "ما في وكالات لسه"; p.textContent = "أضف أول وكالة من النموذج فوق."; }
-      else { s.textContent = "ما لقينا نتيجة"; p.textContent = "جرّب كلمة تانية أو جزء من الـ ID."; }
-      e.append(s, p);
+      if (!loaded) {
+        s.textContent = "جارٍ تحميل قائمة الوكالات...";
+        p.textContent = "يُرجى الانتظار لحظات للاتصال بقاعدة البيانات.";
+      } else if (!items.length) {
+        s.textContent = "لا توجد وكالات مسجلة حتى الآن";
+        p.textContent = "يمكنك إضافة أول وكالة باستخدام النموذج أعلاه.";
+      } else {
+        s.textContent = "لم يتم العثور على أي نتائج مطابقة";
+        p.textContent = "يرجى تجربة كلمة بحث أخرى أو التأكد من معرف الوكالة (ID).";
+      }
+      e.append(iconWrap, s, p);
       list.appendChild(e);
       return;
     }
@@ -112,9 +130,9 @@ async function start() {
       cb.type = "button"; cb.className = "btn-copy"; cb.textContent = "نسخ ID";
       cb.addEventListener("click", () => {
         copyText(it.id).then(() => {
-          cb.textContent = "تم النسخ"; cb.classList.add("done");
+          cb.textContent = "تم النسخ ✓"; cb.classList.add("done");
         }, () => {
-          cb.textContent = "حدد وانسخ";
+          cb.textContent = "تحديد ونسخ";
           const r = document.createRange(); r.selectNodeContents(chip);
           const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
         });
@@ -131,7 +149,7 @@ async function start() {
       const db_ = document.createElement("button");
       db_.type = "button";
       db_.className = "danger" + (armedId === it._id ? " armed" : "");
-      db_.textContent = armedId === it._id ? "اضغط تاني للتأكيد" : "حذف";
+      db_.textContent = armedId === it._id ? "تأكيد الحذف نهائياً" : "حذف";
       db_.addEventListener("click", () => onDelete(it));
       tools.append(eb, db_);
       li.appendChild(tools);
@@ -140,11 +158,12 @@ async function start() {
     }
   }
 
-  /* ---------- edit / delete ---------- */
+  /* ---------- التعديل والحذف ---------- */
   function startEdit(it) {
     editingId = it._id;
     $("ar").value = it.ar || ""; $("en").value = it.en || ""; $("aid").value = it.id || "";
-    $("formTitle").textContent = "تعديل وكالة";
+    $("formTitle").textContent = "تعديل بيانات الوكالة";
+    $("save").textContent = "حفظ التعديلات";
     $("cancel").hidden = false; $("msg").textContent = "";
     $("addbox").open = true;
     $("addbox").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -153,7 +172,8 @@ async function start() {
   function resetForm() {
     editingId = null;
     $("form").reset();
-    $("formTitle").textContent = "إضافة وكالة";
+    $("formTitle").textContent = "إضافة وكالة جديدة";
+    $("save").textContent = "حفظ البيانات";
     $("cancel").hidden = true; $("msg").textContent = "";
   }
 
@@ -161,7 +181,7 @@ async function start() {
     if (armedId !== it._id) {
       armedId = it._id;
       clearTimeout(armTimer);
-      armTimer = setTimeout(() => { armedId = null; render(); }, 3000);
+      armTimer = setTimeout(() => { armedId = null; render(); }, 3500);
       render();
       return;
     }
@@ -179,10 +199,10 @@ async function start() {
     ev.preventDefault();
     const msg = $("msg");
     const ar = $("ar").value.trim(), en = $("en").value.trim(), id = $("aid").value.trim();
-    if (!id) { msg.textContent = "اكتب الـ ID."; return; }
-    if (!ar && !en) { msg.textContent = "اكتب اسم الوكالة بالعربي أو الإنجليزي."; return; }
+    if (!id) { msg.textContent = "يُرجى إدخال معرف الوكالة (ID)."; return; }
+    if (!ar && !en) { msg.textContent = "يُرجى إدخال اسم الوكالة بالعربية أو الإنجليزية على الأقل."; return; }
     if (items.some((i) => i.id.toLowerCase() === id.toLowerCase() && i._id !== editingId)) {
-      msg.textContent = "هذا الـ ID موجود من قبل."; return;
+      msg.textContent = "معرف الوكالة (ID) مسجل مسبقاً، يُرجى استخدام معرف مختلف."; return;
     }
     msg.textContent = "";
     const btn = $("save"); btn.disabled = true;
@@ -194,10 +214,10 @@ async function start() {
     btn.disabled = false;
   });
 
-  /* ---------- firestore listen ---------- */
+  /* ---------- الاستماع المباشر لقاعدة البيانات ---------- */
   function listen() {
     loaded = false; firstSnap = true; render();
-    const timer = setTimeout(() => showNote("تعذر الوصول للبيانات حالياً، قد تكون القائمة غير محدثة."), 10000);
+    const timer = setTimeout(() => showNote("تعذر تحديث البيانات من الخادم، قد تكون القائمة الحالية غير مكتملة."), 10000);
     onSnapshot(col, (snap) => {
       items = snap.docs.map((d) => {
         const x = d.data();

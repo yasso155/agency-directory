@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>دليل الوكالات</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,7 +16,14 @@
     <!-- التطبيق -->
     <section id="app" class="stack">
       <header>
-        <h1>دليل الوكالات</h1>
+        <div class="brand">
+          <div class="logo-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 21h18M5 21V7l8-4v18M13 21V3l6 3v15"/>
+            </svg>
+          </div>
+          <h1>دليل الوكالات</h1>
+        </div>
         <div class="head-side">
           <span class="count" id="count" aria-live="polite"></span>
         </div>
@@ -23,28 +32,31 @@
       <p class="note" id="note" hidden></p>
 
       <div class="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input type="search" id="q" placeholder="ابحث بالاسم العربي أو الإنجليزي أو الـ ID" autocomplete="off" aria-label="بحث">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input type="search" id="q" placeholder="ابحث باسم الوكالة بالعربية أو الإنجليزية أو المعرف (ID)..." autocomplete="off" aria-label="بحث في الوكالات">
       </div>
 
       <details class="add" id="addbox" open>
-        <summary id="formTitle">إضافة وكالة</summary>
+        <summary id="formTitle">إضافة وكالة جديدة</summary>
         <form id="form" autocomplete="off">
           <div class="field">
-            <label for="ar">اسم الوكالة بالعربي</label>
-            <input type="text" id="ar" placeholder="الاسم بالعربي">
+            <label for="ar">اسم الوكالة بالعربية</label>
+            <input type="text" id="ar" placeholder="مثال: وكالة الخرطوم للسفر">
           </div>
           <div class="field">
-            <label for="en">اسم الوكالة بالإنجليزي</label>
-            <input type="text" id="en" class="ltr" placeholder="Agency name">
+            <label for="en">اسم الوكالة بالإنجليزية</label>
+            <input type="text" id="en" class="ltr" placeholder="e.g. Khartoum Travel Agency">
           </div>
           <div class="field full">
-            <label for="aid">ID الوكالة</label>
-            <input type="text" id="aid" class="ltr mono" placeholder="ID" autocapitalize="off" spellcheck="false">
+            <label for="aid">معرف الوكالة (ID)</label>
+            <input type="text" id="aid" class="ltr mono" placeholder="مثال: KRT-001" autocapitalize="off" spellcheck="false">
           </div>
           <p class="msg" id="msg" role="alert"></p>
           <div class="actions">
-            <button type="submit" class="btn-primary" id="save">حفظ</button>
+            <button type="submit" class="btn-primary" id="save">حفظ البيانات</button>
             <button type="button" class="btn-ghost" id="cancel" hidden>إلغاء التعديل</button>
           </div>
         </form>
@@ -53,10 +65,10 @@
       <ul class="list" id="list"></ul>
     </section>
 
-    <!-- ما اتعبّت إعدادات Firebase -->
+    <!-- في حال عدم توفر إعدادات Firebase -->
     <section id="setup" class="card" hidden>
-      <h1>باقي إعدادات Firebase</h1>
-      <p>افتح ملف <code>firebase-config.js</code> وضع فيه إعدادات مشروعك من Firebase Console، وبعدين حدّث الصفحة.</p>
+      <h1>إعدادات Firebase غير مكتملة</h1>
+      <p>يُرجى التحقق من ملف <code>firebase-config.js</code> ووضع بيانات المشروع من Firebase Console، ثم تحديث الصفحة.</p>
     </section>
 
   </main>
