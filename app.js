@@ -195,15 +195,49 @@ async function start() {
   $("q").addEventListener("input", (e) => { query = e.target.value; render(); });
   $("cancel").addEventListener("click", resetForm);
 
+  // التحقق الفوري أثناء كتابة معرف الوكالة
+  $("aid").addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    const msg = $("msg");
+    if (val && !/^\d+$/.test(val)) {
+      msg.textContent = "⚠️ تنبيه: يُسمح بالأرقام فقط في خانة الـ ID (0-9).";
+      return;
+    }
+    if (val && items.some((i) => String(i.id).trim() === val && i._id !== editingId)) {
+      msg.textContent = `⚠️ تحذير: رقم المعرف (${val}) مسجل مسبقاً لوكالة أخرى! لا يمكن تكراره.`;
+      return;
+    }
+    if (msg.textContent.startsWith("⚠️")) {
+      msg.textContent = "";
+    }
+  });
+
   $("form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const msg = $("msg");
     const ar = $("ar").value.trim(), en = $("en").value.trim(), id = $("aid").value.trim();
-    if (!id) { msg.textContent = "يُرجى إدخال معرف الوكالة (ID)."; return; }
-    if (!ar && !en) { msg.textContent = "يُرجى إدخال اسم الوكالة بالعربية أو الإنجليزية على الأقل."; return; }
-    if (items.some((i) => i.id.toLowerCase() === id.toLowerCase() && i._id !== editingId)) {
-      msg.textContent = "معرف الوكالة (ID) مسجل مسبقاً، يُرجى استخدام معرف مختلف."; return;
+
+    if (!id) {
+      msg.textContent = "يُرجى إدخال معرّف الوكالة (ID).";
+      $("aid").focus();
+      return;
     }
+    if (!/^\d+$/.test(id)) {
+      msg.textContent = "⚠️ خطأ: يجب أن يتكون معرّف الوكالة (ID) من أرقام فقط (0-9).";
+      $("aid").focus();
+      return;
+    }
+    if (items.some((i) => String(i.id).trim() === id && i._id !== editingId)) {
+      msg.textContent = `⚠️ تحذير: معرّف الوكالة (${id}) مسجل مسبقاً! هذا الرقم فريد (Unique) ولا يمكن تكراره.`;
+      $("aid").focus();
+      return;
+    }
+    if (!ar && !en) {
+      msg.textContent = "يُرجى إدخال اسم الوكالة بالعربية أو الإنجليزية على الأقل.";
+      $("ar").focus();
+      return;
+    }
+
     msg.textContent = "";
     const btn = $("save"); btn.disabled = true;
     try {

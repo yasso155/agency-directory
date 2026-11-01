@@ -278,7 +278,16 @@ label {
   min-height: 1.3em;
   margin: 0;
   grid-column: 1 / -1;
-  font-weight: 500;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.msg:not(:empty) {
+  padding: 10px 14px;
+  background: var(--danger-soft);
+  border: 1px solid rgba(225, 29, 72, 0.28);
+  border-radius: var(--radius-sm);
+  display: block;
 }
 
 /* Buttons */
