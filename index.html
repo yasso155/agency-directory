@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>دليل الوكالات</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+
+    <!-- شاشة الدخول -->
+    <section id="login" class="card login" hidden>
+      <h1>دليل الوكالات</h1>
+      <form id="loginForm">
+        <div class="field">
+          <label for="email">الإيميل</label>
+          <input type="text" id="email" class="ltr" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="password">كلمة السر</label>
+          <input type="password" id="password" class="ltr" autocomplete="current-password">
+        </div>
+        <p class="msg" id="loginMsg" role="alert"></p>
+        <button type="submit" class="btn-primary" id="loginBtn">دخول</button>
+      </form>
+    </section>
+
+    <!-- التطبيق -->
+    <section id="app" class="stack" hidden>
+      <header>
+        <h1>دليل الوكالات</h1>
+        <div class="head-side">
+          <span class="count" id="count" aria-live="polite"></span>
+          <button type="button" class="link" id="logout">خروج</button>
+        </div>
+      </header>
+
+      <p class="note" id="note" hidden></p>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="q" placeholder="ابحث بالاسم العربي أو الإنجليزي أو الـ ID" autocomplete="off" aria-label="بحث">
+      </div>
+
+      <details class="add" id="addbox" open>
+        <summary id="formTitle">إضافة وكالة</summary>
+        <form id="form" autocomplete="off">
+          <div class="field">
+            <label for="ar">اسم الوكالة بالعربي</label>
+            <input type="text" id="ar" placeholder="الاسم بالعربي">
+          </div>
+          <div class="field">
+            <label for="en">اسم الوكالة بالإنجليزي</label>
+            <input type="text" id="en" class="ltr" placeholder="Agency name">
+          </div>
+          <div class="field full">
+            <label for="aid">ID الوكالة</label>
+            <input type="text" id="aid" class="ltr mono" placeholder="ID" autocapitalize="off" spellcheck="false">
+          </div>
+          <p class="msg" id="msg" role="alert"></p>
+          <div class="actions">
+            <button type="submit" class="btn-primary" id="save">حفظ</button>
+            <button type="button" class="btn-ghost" id="cancel" hidden>إلغاء التعديل</button>
+          </div>
+        </form>
+      </details>
+
+      <ul class="list" id="list"></ul>
+    </section>
+
+    <!-- ما اتعبّت إعدادات Firebase -->
+    <section id="setup" class="card" hidden>
+      <h1>باقي إعدادات Firebase</h1>
+      <p>افتح ملف <code>firebase-config.js</code> وضع فيه إعدادات مشروعك من Firebase Console، وبعدين حدّث الصفحة.</p>
+    </section>
+
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function allowed() {
+      return request.auth != null
+        && request.auth.token.email in ['yseddig15@gmail.com'];
+    }
+
+    function valid() {
+      let d = request.resource.data;
+      return d.id is string && d.id.size() > 0 && d.id.size() <= 100
+        && d.ar is string && d.ar.size() <= 200
+        && d.en is string && d.en.size() <= 200;
+    }
+
+    match /agencies/{docId} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed() && valid();
+    }
+  }
+}
