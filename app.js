@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id);
 
 if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("YOUR_")) {
   $("setup").hidden = false;
+  $("app").hidden = true;
 } else {
   start();
 }
@@ -11,19 +12,16 @@ if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("YOUR_")) {
 async function start() {
   const V = "10.14.1";
   const base = `https://www.gstatic.com/firebasejs/${V}`;
-  const [{ initializeApp }, authMod, fsMod] = await Promise.all([
+  const [{ initializeApp }, fsMod] = await Promise.all([
     import(`${base}/firebase-app.js`),
-    import(`${base}/firebase-auth.js`),
     import(`${base}/firebase-firestore.js`),
   ]);
-  const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } = authMod;
   const {
     initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
     collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
   } = fsMod;
 
   const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
   const db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   });
@@ -36,7 +34,6 @@ async function start() {
   let armTimer = null;
   let loaded = false;
   let firstSnap = true;
-  let unsub = null;
 
   /* ---------- helpers ---------- */
   const norm = (s) =>
@@ -68,7 +65,7 @@ async function start() {
 
   const errText = (e) => {
     const c = e && e.code;
-    if (c === "permission-denied") return "ما عندك صلاحية. تأكد من الإيميل في Firestore Rules.";
+    if (c === "permission-denied") return "ما عندك صلاحية الوصول لقاعدة البيانات. تأكد من Firestore Rules.";
     if (c === "unavailable") return "ما في اتصال بالإنترنت، جرّب تاني.";
     return "ما اتحفظ، جرّب تاني.";
   };
@@ -152,12 +149,14 @@ async function start() {
     $("addbox").open = true;
     $("addbox").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
   function resetForm() {
     editingId = null;
     $("form").reset();
     $("formTitle").textContent = "إضافة وكالة";
     $("cancel").hidden = true; $("msg").textContent = "";
   }
+
   function onDelete(it) {
     if (armedId !== it._id) {
       armedId = it._id;
@@ -195,29 +194,11 @@ async function start() {
     btn.disabled = false;
   });
 
-  /* ---------- auth ---------- */
-  $("loginForm").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const m = $("loginMsg"); m.textContent = "";
-    const btn = $("loginBtn"); btn.disabled = true;
-    try {
-      await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
-      $("password").value = "";
-    } catch (e) {
-      const c = e && e.code;
-      m.textContent = (c === "auth/invalid-credential" || c === "auth/wrong-password" || c === "auth/user-not-found")
-        ? "الإيميل أو كلمة السر غلط."
-        : c === "auth/too-many-requests" ? "محاولات كتيرة، انتظر شوية وجرّب."
-        : "ما قدرنا ندخل، جرّب تاني.";
-    }
-    btn.disabled = false;
-  });
-  $("logout").addEventListener("click", () => signOut(auth));
-
+  /* ---------- firestore listen ---------- */
   function listen() {
     loaded = false; firstSnap = true; render();
     const timer = setTimeout(() => showNote("تعذر الوصول للبيانات حالياً، قد تكون القائمة غير محدثة."), 10000);
-    unsub = onSnapshot(col, (snap) => {
+    onSnapshot(col, (snap) => {
       items = snap.docs.map((d) => {
         const x = d.data();
         return { _id: d.id, ar: x.ar || "", en: x.en || "", id: String(x.id || "") };
@@ -233,14 +214,5 @@ async function start() {
     });
   }
 
-  onAuthStateChanged(auth, (user) => {
-    if (unsub) { unsub(); unsub = null; }
-    if (user) {
-      $("login").hidden = true; $("app").hidden = false;
-      listen();
-    } else {
-      items = []; loaded = false;
-      $("app").hidden = true; $("login").hidden = false;
-    }
-  });
+  listen();
 }
