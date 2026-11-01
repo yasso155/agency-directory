@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <title>دليل الوكالات</title>
+  <title>دليل الوكالات - ياسر الجعلي</title>
+  <link rel="icon" type="image/png" href="assets/logo-black.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
@@ -17,12 +18,14 @@
     <section id="app" class="stack">
       <header>
         <div class="brand">
-          <div class="logo-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 21h18M5 21V7l8-4v18M13 21V3l6 3v15"/>
-            </svg>
+          <picture class="brand-logo">
+            <source srcset="assets/logo-white.png" media="(prefers-color-scheme: dark)">
+            <img src="assets/logo-black.png" alt="ياسر الجعلي - YASER ALJAALI" class="logo-img">
+          </picture>
+          <div class="brand-divider" aria-hidden="true"></div>
+          <div class="brand-info">
+            <h1>دليل الوكالات</h1>
           </div>
-          <h1>دليل الوكالات</h1>
         </div>
         <div class="head-side">
           <span class="count" id="count" aria-live="polite"></span>

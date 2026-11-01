@@ -34,6 +34,7 @@ async function start() {
   let armTimer = null;
   let loaded = false;
   let firstSnap = true;
+  const expandedIds = new Set();
 
   /* ---------- دوال مساعدة ---------- */
   const norm = (s) =>
@@ -113,8 +114,43 @@ async function start() {
     }
 
     for (const it of shown) {
+      const isExpanded = expandedIds.has(it._id);
       const li = document.createElement("li");
-      li.className = "row";
+      li.className = "row" + (isExpanded ? " expanded" : "");
+      li.setAttribute("role", "button");
+      li.setAttribute("tabindex", "0");
+      li.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+      li.setAttribute("title", isExpanded ? "انقر لتصغير البطاقة" : "انقر لتكبير البطاقة وإظهار التعديل والحذف");
+
+      const toggleExpand = () => {
+        if (expandedIds.has(it._id)) {
+          expandedIds.delete(it._id);
+          li.classList.remove("expanded");
+          li.setAttribute("aria-expanded", "false");
+          li.setAttribute("title", "انقر لتكبير البطاقة وإظهار التعديل والحذف");
+          const expBtn = li.querySelector(".expand-btn");
+          if (expBtn) expBtn.setAttribute("aria-label", "تكبير وإظهار التعديل/الحذف");
+        } else {
+          expandedIds.add(it._id);
+          li.classList.add("expanded");
+          li.setAttribute("aria-expanded", "true");
+          li.setAttribute("title", "انقر لتصغير البطاقة");
+          const expBtn = li.querySelector(".expand-btn");
+          if (expBtn) expBtn.setAttribute("aria-label", "تصغير البطاقة");
+        }
+      };
+
+      li.addEventListener("click", (e) => {
+        if (e.target.closest("button, a, input, select, textarea, .idchip")) return;
+        toggleExpand();
+      });
+
+      li.addEventListener("keydown", (e) => {
+        if (e.target === li && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          toggleExpand();
+        }
+      });
 
       const names = document.createElement("div");
       names.className = "names";
@@ -128,7 +164,8 @@ async function start() {
       chip.className = "idchip"; chip.textContent = it.id;
       const cb = document.createElement("button");
       cb.type = "button"; cb.className = "btn-copy"; cb.textContent = "نسخ ID";
-      cb.addEventListener("click", () => {
+      cb.addEventListener("click", (e) => {
+        e.stopPropagation();
         copyText(it.id).then(() => {
           cb.textContent = "تم النسخ ✓"; cb.classList.add("done");
         }, () => {
@@ -138,19 +175,39 @@ async function start() {
         });
         setTimeout(() => { cb.textContent = "نسخ ID"; cb.classList.remove("done"); }, 1800);
       });
-      box.append(chip, cb);
+
+      const expBtn = document.createElement("button");
+      expBtn.type = "button";
+      expBtn.className = "expand-btn";
+      expBtn.setAttribute("aria-label", isExpanded ? "تصغير البطاقة" : "تكبير وإظهار التعديل/الحذف");
+      expBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
+      expBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleExpand();
+      });
+
+      box.append(chip, cb, expBtn);
       li.appendChild(box);
 
       const tools = document.createElement("div");
       tools.className = "tools";
       const eb = document.createElement("button");
-      eb.type = "button"; eb.textContent = "تعديل";
-      eb.addEventListener("click", () => startEdit(it));
+      eb.type = "button";
+      eb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>تعديل</span>`;
+      eb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        startEdit(it);
+      });
       const db_ = document.createElement("button");
       db_.type = "button";
       db_.className = "danger" + (armedId === it._id ? " armed" : "");
-      db_.textContent = armedId === it._id ? "تأكيد الحذف نهائياً" : "حذف";
-      db_.addEventListener("click", () => onDelete(it));
+      db_.innerHTML = armedId === it._id
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>تأكيد الحذف نهائياً</span>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>حذف</span>`;
+      db_.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onDelete(it);
+      });
       tools.append(eb, db_);
       li.appendChild(tools);
 
@@ -180,12 +237,14 @@ async function start() {
   function onDelete(it) {
     if (armedId !== it._id) {
       armedId = it._id;
+      expandedIds.add(it._id);
       clearTimeout(armTimer);
       armTimer = setTimeout(() => { armedId = null; render(); }, 3500);
       render();
       return;
     }
     armedId = null; clearTimeout(armTimer);
+    expandedIds.delete(it._id);
     deleteDoc(doc(db, "agencies", it._id)).then(
       () => { if (editingId === it._id) resetForm(); },
       (e) => showNote(errText(e)));
