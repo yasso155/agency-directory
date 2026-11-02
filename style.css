@@ -89,9 +89,9 @@ header {
 }
 
 .logo-img {
-  height: 48px;
+  height: 46px;
   width: auto;
-  max-width: 175px;
+  max-width: 195px;
   object-fit: contain;
   display: block;
 }
@@ -608,7 +608,7 @@ li.row.expanded .tools {
 @media (max-width: 600px) {
   form { grid-template-columns: 1fr; }
   .brand { gap: 10px; }
-  .logo-img { height: 38px; max-width: 135px; }
+  .logo-img { height: 38px; max-width: 155px; }
   .brand-divider { height: 26px; }
   h1 { font-size: 1.3rem; }
   li.row { grid-template-columns: 1fr; }
