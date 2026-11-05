@@ -78,14 +78,23 @@ async function start() {
     const nq = norm(query);
     const shown = items.filter((it) =>
       !nq || norm(it.ar).includes(nq) || norm(it.en).includes(nq) || norm(it.id).includes(nq));
-    shown.sort((a, b) => (a.ar || a.en || "").localeCompare(b.ar || b.en || "", "ar"));
 
+    // الترتيب: الوكالات المثبتة أولاً (بحد أقصى 5)، ثم الترتيب الأبجدي
+    shown.sort((a, b) => {
+      const aPin = Boolean(a.pinned);
+      const bPin = Boolean(b.pinned);
+      if (aPin !== bPin) return aPin ? -1 : 1;
+      return (a.ar || a.en || "").localeCompare(b.ar || b.en || "", "ar");
+    });
+
+    const pinnedCount = items.filter((i) => i.pinned).length;
     if (!loaded) {
       $("count").textContent = "جارٍ التحميل...";
     } else if (nq) {
       $("count").textContent = `عرض ${shown.length} من أصل ${items.length} وكالة`;
     } else {
-      $("count").textContent = items.length === 0 ? "لا توجد وكالات" : `${items.length} وكالة مسجلة`;
+      const pinText = pinnedCount > 0 ? ` (${pinnedCount} مثبتة)` : "";
+      $("count").textContent = items.length === 0 ? "لا توجد وكالات" : `${items.length} وكالة مسجلة${pinText}`;
     }
 
     if (!shown.length) {
@@ -115,21 +124,22 @@ async function start() {
 
     for (const it of shown) {
       const isExpanded = expandedIds.has(it._id);
+      const isPinned = Boolean(it.pinned);
       const li = document.createElement("li");
-      li.className = "row" + (isExpanded ? " expanded" : "");
+      li.className = "row" + (isExpanded ? " expanded" : "") + (isPinned ? " pinned" : "");
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", "0");
       li.setAttribute("aria-expanded", isExpanded ? "true" : "false");
-      li.setAttribute("title", isExpanded ? "انقر لتصغير البطاقة" : "انقر لتكبير البطاقة وإظهار التعديل والحذف");
+      li.setAttribute("title", isExpanded ? "انقر لتصغير البطاقة" : "انقر لتكبير البطاقة وإظهار الخيارات");
 
       const toggleExpand = () => {
         if (expandedIds.has(it._id)) {
           expandedIds.delete(it._id);
           li.classList.remove("expanded");
           li.setAttribute("aria-expanded", "false");
-          li.setAttribute("title", "انقر لتكبير البطاقة وإظهار التعديل والحذف");
+          li.setAttribute("title", "انقر لتكبير البطاقة وإظهار الخيارات");
           const expBtn = li.querySelector(".expand-btn");
-          if (expBtn) expBtn.setAttribute("aria-label", "تكبير وإظهار التعديل/الحذف");
+          if (expBtn) expBtn.setAttribute("aria-label", "تكبير وإظهار الخيارات");
         } else {
           expandedIds.add(it._id);
           li.classList.add("expanded");
@@ -154,6 +164,13 @@ async function start() {
 
       const names = document.createElement("div");
       names.className = "names";
+      if (isPinned) {
+        const pinBadge = document.createElement("span");
+        pinBadge.className = "pin-badge";
+        pinBadge.title = "وكالة مثبتة في الأعلى";
+        pinBadge.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6l.8 1 .8-1v-6H18v-2l-2-2z"/></svg><span>مثبتة</span>`;
+        names.appendChild(pinBadge);
+      }
       if (it.ar) {
         const a = document.createElement("span");
         a.className = "ar";
@@ -207,6 +224,18 @@ async function start() {
 
       const tools = document.createElement("div");
       tools.className = "tools";
+
+      const pb = document.createElement("button");
+      pb.type = "button";
+      pb.className = "btn-pin" + (isPinned ? " is-pinned" : "");
+      pb.innerHTML = isPinned
+        ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6l.8 1 .8-1v-6H18v-2l-2-2z"/></svg><span>إلغاء التثبيت</span>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6l.8 1 .8-1v-6H18v-2l-2-2z"/></svg><span>تثبيت في الأعلى (${pinnedCount}/5)</span>`;
+      pb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePin(it);
+      });
+
       const eb = document.createElement("button");
       eb.type = "button";
       eb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>تعديل</span>`;
@@ -224,14 +253,32 @@ async function start() {
         e.stopPropagation();
         onDelete(it);
       });
-      tools.append(eb, db_);
+      tools.append(pb, eb, db_);
       li.appendChild(tools);
 
       list.appendChild(li);
     }
   }
 
-  /* ---------- التعديل والحذف ---------- */
+  /* ---------- التثبيت والتعديل والحذف ---------- */
+  async function togglePin(it) {
+    const isPinned = Boolean(it.pinned);
+    if (!isPinned) {
+      const currentPinned = items.filter((x) => x.pinned).length;
+      if (currentPinned >= 5) {
+        showNote("⚠️ تنبيه: تم الوصول للحد الأقصى (5 وكالات مثبتة). يُرجى إلغاء تثبيت إحدى الوكالات أولاً لتتمكن من تثبيت غيرها.");
+        setTimeout(() => showNote(""), 5000);
+        return;
+      }
+    }
+    showNote("");
+    try {
+      await updateDoc(doc(db, "agencies", it._id), { pinned: !isPinned });
+    } catch (e) {
+      showNote(errText(e));
+    }
+  }
+
   function startEdit(it) {
     editingId = it._id;
     $("ar").value = it.ar || ""; $("en").value = it.en || ""; $("aid").value = it.id || "";
@@ -330,7 +377,13 @@ async function start() {
     onSnapshot(col, (snap) => {
       items = snap.docs.map((d) => {
         const x = d.data();
-        return { _id: d.id, ar: x.ar || "", en: x.en || "", id: String(x.id || "") };
+        return {
+          _id: d.id,
+          ar: x.ar || "",
+          en: x.en || "",
+          id: String(x.id || ""),
+          pinned: Boolean(x.pinned),
+        };
       });
       loaded = true;
       if (!snap.metadata.fromCache) { clearTimeout(timer); showNote(""); }
