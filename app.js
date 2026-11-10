@@ -945,15 +945,25 @@ async function start() {
     } catch {}
   }
 
+  const BASE_TITLE = "دليل الوكالات";
+
   function updateBellBadge() {
     const unreadCount = mentionsList.filter((m) => !seenMentionIds.has(m._id)).length;
     const badge = $("bellBadge");
-    if (!badge) return;
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+      }
+    }
+
+    // إظهار عدد الإشعارات بين قوسين في اسم التاب بالمتصفح
     if (unreadCount > 0) {
-      badge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
-      badge.hidden = false;
+      document.title = `(${unreadCount}) ${BASE_TITLE}`;
     } else {
-      badge.hidden = true;
+      document.title = BASE_TITLE;
     }
   }
 
