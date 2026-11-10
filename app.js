@@ -45,6 +45,8 @@ async function start() {
   const topupsCol = collection(db, "topups");
   const topupsQ = query(topupsCol, orderBy("createdAt", "desc"), limit(1000));
   const botDoc = doc(db, "system", "bot");
+  const mentionsCol = collection(db, "mentions");
+  const mentionsQ = query(mentionsCol, orderBy("createdAt", "desc"), limit(50));
 
   let items = [];            // قائمة الوكالات
   let topups = [];           // قائمة التغذيات (الأحدث أولاً)
@@ -404,6 +406,133 @@ async function start() {
   let dlgAgency = null;
   let dupAck = false;
   let savingTopup = false;
+  let currentAttachment = null; // { type, name, mimetype, data, size }
+
+  // تشغيل نغمة تنبيه لطيفة بدون ملفات صوت خارجية
+  function playChime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, now); // D5
+      osc.frequency.setValueAtTime(880, now + 0.12); // A5
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.6);
+    } catch { /* تجاهل قيود الصوت للمتصفح */ }
+  }
+
+  // ضغط الصور تلقائياً لتناسب قاعدة البيانات وسرعة الإرسال
+  function compressImage(file, maxWidth = 1280, quality = 0.78) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let w = img.width;
+          let h = img.height;
+          if (w > maxWidth || h > maxWidth) {
+            if (w > h) {
+              h = Math.round((h * maxWidth) / w);
+              w = maxWidth;
+            } else {
+              w = Math.round((w * maxWidth) / h);
+              h = maxWidth;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUrl);
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function resetAttachment() {
+    currentAttachment = null;
+    $("dlgFile").value = "";
+    $("fileCard").hidden = true;
+    $("btnChooseFile").hidden = false;
+    $("fileImgThumb").hidden = true;
+    $("filePdfIcon").hidden = true;
+    $("fileImgThumb").src = "";
+  }
+
+  $("btnChooseFile").addEventListener("click", () => $("dlgFile").click());
+
+  $("dlgFile").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isImg = file.type.startsWith("image/");
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
+    if (!isImg && !isPdf) {
+      alert("يُرجى اختيار صورة (JPG/PNG) أو ملف PDF فقط.");
+      resetAttachment();
+      return;
+    }
+    if (isPdf && file.size > 800 * 1024) {
+      alert("حجم ملف الـ PDF كبير (الحد الأقصى 800 كيلوبايت). يُرجى اختيار ملف أصغر.");
+      resetAttachment();
+      return;
+    }
+
+    try {
+      let dataUrl = "";
+      if (isImg) {
+        dataUrl = await compressImage(file);
+      } else {
+        dataUrl = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(file);
+        });
+      }
+
+      currentAttachment = {
+        type: isImg ? "image" : "pdf",
+        name: file.name,
+        mimetype: isImg ? "image/jpeg" : "application/pdf",
+        data: dataUrl,
+        size: Math.round(dataUrl.length * 0.75),
+      };
+
+      $("fileCardName").textContent = file.name;
+      $("fileCardSize").textContent = `${Math.round(currentAttachment.size / 1024)} كيلوبايت`;
+      if (isImg) {
+        $("fileImgThumb").src = dataUrl;
+        $("fileImgThumb").hidden = false;
+        $("filePdfIcon").hidden = true;
+      } else {
+        $("fileImgThumb").hidden = true;
+        $("filePdfIcon").hidden = false;
+      }
+      $("fileCard").hidden = false;
+      $("btnChooseFile").hidden = true;
+    } catch (err) {
+      console.error("خطأ في قراءة المرفق:", err);
+      alert("تعذر قراءة الملف المرفق. يُرجى المحاولة مرة أخرى.");
+      resetAttachment();
+    }
+  });
+
+  $("btnRemoveFile").addEventListener("click", resetAttachment);
 
   function updatePreview() {
     if (!dlgAgency) return;
@@ -426,6 +555,7 @@ async function start() {
     $("amount").value = "";
     $("tnote").value = "";
     $("dlgMsg").textContent = "";
+    resetAttachment();
     resetDup();
     updatePreview();
     $("dlg").showModal();
@@ -437,7 +567,10 @@ async function start() {
     updatePreview();
   });
 
-  $("dlgCancel").addEventListener("click", () => $("dlg").close());
+  $("dlgCancel").addEventListener("click", () => {
+    resetAttachment();
+    $("dlg").close();
+  });
 
   $("topupForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -472,7 +605,7 @@ async function start() {
     }, 8000);
 
     try {
-      await addDoc(topupsCol, {
+      const topupDoc = {
         agencyId: a._id,
         agencyAr: a.ar || "",
         agencyEn: a.en || "",
@@ -484,7 +617,13 @@ async function start() {
         createdAt: serverTimestamp(),
         createdBy: "web",
         notify: { status: "pending" },
-      });
+      };
+      if (currentAttachment && currentAttachment.data) {
+        topupDoc.attachment = currentAttachment;
+      }
+
+      await addDoc(topupsCol, topupDoc);
+      resetAttachment();
       $("dlg").close();
       toast(`✓ تمت تغذية ${agencyName(a)} بمبلغ ${fmtNum(amount)} ${CURRENCY} وجارٍ إرسالها للجروب.`);
     } catch (e) {
@@ -636,6 +775,19 @@ async function start() {
         foot.appendChild(err);
       }
 
+      // زر معاينة المرفق (صورة أو PDF)
+      if (t.attachment && t.attachment.data) {
+        const attBtn = document.createElement("button");
+        attBtn.type = "button";
+        attBtn.className = "chip-attach";
+        const isImg = t.attachment.type === "image" || t.attachment.mimetype?.startsWith("image/");
+        attBtn.innerHTML = isImg
+          ? `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><span>معاينة الصورة</span>`
+          : `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>عرض الـ PDF</span>`;
+        attBtn.addEventListener("click", () => openPreviewModal(t.attachment));
+        foot.appendChild(attBtn);
+      }
+
       // زر نسخ الرسالة
       const cp = document.createElement("button");
       cp.type = "button";
@@ -657,6 +809,24 @@ async function start() {
         rb.addEventListener("click", () => retryTopup(t));
         foot.appendChild(rb);
       }
+
+      // زر حذف التغذية من السجل
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn-del";
+      delBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>حذف</span>`;
+      delBtn.addEventListener("click", async () => {
+        const title = t.agencyAr || t.agencyEn || "الوكالة";
+        if (confirm(`هل أنت متأكد من حذف تغذية "${title}" بمبلغ ${fmtNum(t.amount)} ${CURRENCY} من السجل نهائياً؟`)) {
+          try {
+            await deleteDoc(doc(db, "topups", t._id));
+            toast("تم حذف التغذية من السجل بنجاح ✓");
+          } catch (e) {
+            showNote(errText(e));
+          }
+        }
+      });
+      foot.appendChild(delBtn);
 
       li.appendChild(foot);
       ul.appendChild(li);
@@ -745,6 +915,123 @@ async function start() {
     btn.disabled = false;
   });
 
+  /* ---------- نافذة معاينة المرفق (Lightbox) ---------- */
+  function openPreviewModal(att) {
+    const body = $("previewModalBody");
+    body.innerHTML = "";
+    const isImg = att.type === "image" || att.mimetype?.startsWith("image/");
+    if (isImg) {
+      const img = document.createElement("img");
+      img.src = att.data;
+      img.alt = att.name || "معاينة الإيصال";
+      body.appendChild(img);
+    } else {
+      const iframe = document.createElement("iframe");
+      iframe.src = att.data;
+      body.appendChild(iframe);
+    }
+    $("previewDlg").showModal();
+  }
+  $("btnClosePreviewDlg").addEventListener("click", () => $("previewDlg").close());
+
+  /* ---------- إشعارات المنشن والبوب أب (Mentions & Notifications) ---------- */
+  let mentionsList = [];
+  let initialMentionsLoaded = false;
+  let seenMentionIds = new Set(JSON.parse(localStorage.getItem("seen_mentions") || "[]"));
+
+  function saveSeenMentions() {
+    try {
+      localStorage.setItem("seen_mentions", JSON.stringify([...seenMentionIds].slice(-100)));
+    } catch {}
+  }
+
+  function updateBellBadge() {
+    const unreadCount = mentionsList.filter((m) => !seenMentionIds.has(m._id)).length;
+    const badge = $("bellBadge");
+    if (!badge) return;
+    if (unreadCount > 0) {
+      badge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
+  }
+
+  function showMentionPopup(m) {
+    $("mentionSender").textContent = `من: ${m.senderName || m.senderPhone || "شخص ما"}`;
+    $("mentionTime").textContent = fmtWhen(m.time);
+    $("mentionText").textContent = m.text || "رسالة بدون نص";
+    $("mentionPopup").hidden = false;
+
+    playChime();
+
+    // إشعار سطح المكتب للمتصفح إذا كان مسموحاً
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        new Notification(`منشن جديد من ${m.senderName || "الواتساب"}`, {
+          body: m.text,
+          icon: "assets/favicon-32x32.png",
+        });
+      } catch {}
+    }
+  }
+
+  $("btnCloseMention").addEventListener("click", () => {
+    $("mentionPopup").hidden = true;
+  });
+
+  $("btnAckMention").addEventListener("click", () => {
+    $("mentionPopup").hidden = true;
+    if (mentionsList[0]) {
+      seenMentionIds.add(mentionsList[0]._id);
+      saveSeenMentions();
+      updateBellBadge();
+    }
+  });
+
+  // طلب إذن الإشعارات عند أول نقرة
+  document.addEventListener("click", () => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, { once: true });
+
+  function renderMentionsList() {
+    const ul = $("mentionsList");
+    ul.innerHTML = "";
+    if (!mentionsList.length) {
+      ul.innerHTML = '<li class="mentions-empty">لا توجد منشنات مسجلة حتى الآن</li>';
+      return;
+    }
+    for (const m of mentionsList) {
+      const li = document.createElement("li");
+      li.className = "mentions-item";
+      const isUnread = !seenMentionIds.has(m._id);
+      if (isUnread) li.style.borderColor = "var(--accent)";
+
+      const top = document.createElement("div");
+      top.className = "mentions-item-top";
+      top.innerHTML = `<strong>${m.senderName || m.senderPhone || "شخص ما"}</strong><span>${fmtWhen(m.time)}</span>`;
+
+      const txt = document.createElement("p");
+      txt.className = "mentions-item-text";
+      txt.textContent = m.text;
+
+      li.append(top, txt);
+      ul.appendChild(li);
+    }
+  }
+
+  $("btnMentionsBell").addEventListener("click", () => {
+    for (const m of mentionsList) seenMentionIds.add(m._id);
+    saveSeenMentions();
+    updateBellBadge();
+    renderMentionsList();
+    $("mentionsDlg").showModal();
+  });
+
+  $("btnCloseMentionsDlg").addEventListener("click", () => $("mentionsDlg").close());
+
   /* ---------- الاستماع المباشر لقاعدة البيانات (Realtime Listeners) ---------- */
   function listen() {
     agenciesLoaded = false;
@@ -792,6 +1079,7 @@ async function start() {
           currency: x.currency || CURRENCY,
           note: x.note || "",
           message: x.message || "",
+          attachment: x.attachment || null,
           time: t,
           status: x.notify?.status || "pending",
           error: x.notify?.error || null,
@@ -818,6 +1106,48 @@ async function start() {
       checkBotHealth();
     }, (e) => {
       console.error("خطأ في قراءة نبض البوت:", e);
+    });
+
+    // 4. إشعارات المنشن
+    onSnapshot(mentionsQ, (snap) => {
+      const newItems = snap.docs.map((d) => {
+        const x = d.data();
+        return {
+          _id: d.id,
+          text: x.text || "",
+          senderName: x.senderName || "",
+          senderPhone: x.senderPhone || "",
+          time: x.createdAt?.toMillis?.() || Date.now(),
+        };
+      });
+
+      if (initialMentionsLoaded) {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const d = change.doc;
+            const x = d.data();
+            const mentionObj = {
+              _id: d.id,
+              text: x.text || "",
+              senderName: x.senderName || "",
+              senderPhone: x.senderPhone || "",
+              time: x.createdAt?.toMillis?.() || Date.now(),
+            };
+            showMentionPopup(mentionObj);
+          }
+        });
+      } else {
+        initialMentionsLoaded = true;
+        const unreadRecent = newItems.find((m) => !seenMentionIds.has(m._id) && (Date.now() - m.time < 10 * 60 * 1000));
+        if (unreadRecent) {
+          showMentionPopup(unreadRecent);
+        }
+      }
+
+      mentionsList = newItems;
+      updateBellBadge();
+    }, (e) => {
+      console.error("خطأ في قراءة المنشنات:", e);
     });
   }
 

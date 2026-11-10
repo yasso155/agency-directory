@@ -7,16 +7,20 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // 2. سجل التغذيات: القراءة والإضافة متاحة، والتعديل لإعادة المحاولة، والحذف ممنوع لحماية السجل
+    // 2. سجل التغذيات: القراءة والإضافة والتعديل والحذف متاحة
     match /topups/{docId} {
-      allow read, create, update: if true;
-      allow delete: if false;
+      allow read, create, update, delete: if true;
     }
 
     // 3. حالة اتصال البوت: القراءة فقط مسموحة للموقع، والكتابة من البوت بسيرفر السيرفر (Admin SDK)
     match /system/{docId} {
       allow read: if true;
       allow write: if false;
+    }
+
+    // 4. إشعارات المنشن الواردة من جروب الواتساب
+    match /mentions/{docId} {
+      allow read, create, update, delete: if true;
     }
   }
 }

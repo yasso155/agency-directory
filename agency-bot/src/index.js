@@ -19,6 +19,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 initializeApp({ credential: applicationDefault() });
 const db = getFirestore();
 const topups = db.collection("topups");
+const mentions = db.collection("mentions");
 
 /* ---------- نبض البوت (الصفحة تعرض تنبيه لو انقطع) ---------- */
 async function beat() {
@@ -32,9 +33,8 @@ async function beat() {
   }
 }
 
-/* ---------- إرسال تغذية واحدة ---------- */
+/* ---------- إرسال تغذية واحدة (مع دعم إرفاق صورة أو PDF) ---------- */
 async function sendOne(ref) {
-  // نحجزها أولاً داخل transaction عشان ما تنرسل مرتين
   const claimed = await db.runTransaction(async (tx) => {
     const s = await tx.get(ref);
     if (!s.exists || s.get("notify.status") !== "pending") return null;
@@ -44,20 +44,53 @@ async function sendOne(ref) {
   if (!claimed) return;
 
   const text = String(claimed.message || "").trim();
-  if (!text) {
-    await ref.update({ "notify.status": "failed", "notify.error": "الرسالة فاضية" });
+  const attachment = claimed.attachment;
+
+  if (!text && !attachment) {
+    await ref.update({ "notify.status": "failed", "notify.error": "الرسالة فارغة ولا يوجد مرفق" });
     return;
   }
 
   try {
     await sleep(1000 + Math.random() * 2000); // تأخير بسيط يشبه الكتابة البشرية
-    const res = await wa.sock().sendMessage(GROUP_JID, { text });
+    let res;
+
+    if (attachment && attachment.data) {
+      const raw = attachment.data.includes(",") ? attachment.data.split(",")[1] : attachment.data;
+      const buf = Buffer.from(raw, "base64");
+      const isImg = attachment.type === "image" || (attachment.mimetype && attachment.mimetype.startsWith("image/"));
+      const isPdf = attachment.type === "pdf" || attachment.mimetype === "application/pdf" || (attachment.name && attachment.name.toLowerCase().endsWith(".pdf"));
+
+      if (isImg) {
+        res = await wa.sock().sendMessage(GROUP_JID, {
+          image: buf,
+          caption: text || undefined,
+        });
+      } else if (isPdf) {
+        res = await wa.sock().sendMessage(GROUP_JID, {
+          document: buf,
+          mimetype: "application/pdf",
+          fileName: attachment.name || "receipt.pdf",
+          caption: text || undefined,
+        });
+      } else {
+        res = await wa.sock().sendMessage(GROUP_JID, {
+          document: buf,
+          mimetype: attachment.mimetype || "application/octet-stream",
+          fileName: attachment.name || "attachment",
+          caption: text || undefined,
+        });
+      }
+    } else {
+      res = await wa.sock().sendMessage(GROUP_JID, { text });
+    }
+
     await ref.update({
       "notify.status": "sent",
       "notify.sentAt": FieldValue.serverTimestamp(),
       "notify.waMessageId": res?.key?.id ?? null,
     });
-    log("اترسلت:", text);
+    log("اترسلت:", text + (attachment ? ` (مع مرفق: ${attachment.name})` : ""));
   } catch (e) {
     const err = String(e?.message ?? e).slice(0, 200);
     log("فشل الإرسال:", err);
@@ -91,7 +124,7 @@ async function drain() {
   }
 }
 
-/* لو البوت وقع وسط الإرسال، ما نعيد الإرسال تلقائياً (ممكن الرسالة وصلت). نعلّمها فاشلة ويقرر الموظف. */
+/* لو البوت وقع وسط الإرسال، ما نعيد الإرسال تلقائياً */
 async function recoverStuck() {
   const snap = await topups.where("notify.status", "==", "sending").get();
   for (const d of snap.docs) {
@@ -103,11 +136,73 @@ async function recoverStuck() {
   if (snap.size) log(`علّمت ${snap.size} رسالة عالقة كفاشلة`);
 }
 
+/* ---------- رصد المنشن في رسائل الواتساب الواردة ---------- */
+function registerMessageListener(sock) {
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify") return;
+    for (const m of messages) {
+      // تجاهل الرسائل الصادرة من البوت نفسه
+      if (m.key.fromMe) return;
+
+      const remoteJid = m.key.remoteJid || "";
+      // فحص الرسائل القادمة في الجروب أو في الخاص
+      if (remoteJid !== GROUP_JID && !remoteJid.endsWith("@s.whatsapp.net")) continue;
+
+      const msgContent = m.message;
+      if (!msgContent) continue;
+
+      const unwrapped = msgContent.ephemeralMessage?.message ||
+                        msgContent.viewOnceMessage?.message ||
+                        msgContent.viewOnceMessageV2?.message ||
+                        msgContent.documentWithCaptionMessage?.message ||
+                        msgContent;
+
+      const text = (unwrapped.conversation ||
+                    unwrapped.extendedTextMessage?.text ||
+                    unwrapped.imageMessage?.caption ||
+                    unwrapped.videoMessage?.caption ||
+                    unwrapped.documentMessage?.caption || "").trim();
+
+      const context = unwrapped.extendedTextMessage?.contextInfo ||
+                      unwrapped.imageMessage?.contextInfo ||
+                      unwrapped.videoMessage?.contextInfo ||
+                      unwrapped.documentMessage?.contextInfo;
+
+      const mentionedJids = context?.mentionedJid || [];
+      const hasMention = mentionedJids.length > 0 || text.includes("@");
+
+      if (hasMention) {
+        const senderName = m.pushName || (m.key.participant || remoteJid).split("@")[0];
+        const senderPhone = (m.key.participant || remoteJid).split("@")[0];
+
+        try {
+          await mentions.add({
+            text,
+            senderName,
+            senderPhone,
+            mentionedJids,
+            groupJid: remoteJid,
+            createdAt: FieldValue.serverTimestamp(),
+            read: false,
+          });
+          log(`🔔 تم تسجيل منشن جديد من ${senderName}: ${text}`);
+        } catch (e) {
+          console.error("خطأ في تسجيل المنشن:", e.message);
+        }
+      }
+    }
+  });
+}
+
 /* ---------- تشغيل ---------- */
 const wa = startWhatsApp({
   authDir: AUTH_DIR,
   pairingPhone: PAIRING_PHONE,
-  onOpen: () => { beat(); drain(); },
+  onOpen: (sock) => {
+    registerMessageListener(sock);
+    beat();
+    drain();
+  },
   onClose: () => { beat(); },
 });
 
