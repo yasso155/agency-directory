@@ -1,0 +1,8 @@
+node_modules/
+agency-bot/node_modules/
+agency-bot/auth/
+agency-bot/.env
+agency-bot/serviceAccount.json
+*.log
+.DS_Store
+Thumbs.db

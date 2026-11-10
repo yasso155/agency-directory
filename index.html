@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <title>دليل الوكالات </title>
+  <title>دليل الوكالات</title>
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
@@ -39,6 +39,12 @@
       </header>
 
       <p class="note" id="note" hidden></p>
+      <p class="note warn" id="botNote" hidden></p>
+
+      <div class="tabs" role="tablist" aria-label="الأقسام">
+        <button type="button" role="tab" id="tabAgencies" aria-selected="true" aria-controls="viewAgencies">الوكالات</button>
+        <button type="button" role="tab" id="tabHistory" aria-selected="false" aria-controls="viewHistory">سجل التغذيات</button>
+      </div>
 
       <div class="search">
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -47,44 +53,97 @@
           <path d="m21 21-4.35-4.35" />
         </svg>
         <input type="search" id="q" placeholder="ابحث باسم الوكالة بالعربية أو الإنجليزية أو المعرف (ID)..."
-          autocomplete="off" aria-label="بحث في الوكالات">
+          autocomplete="off" aria-label="بحث">
       </div>
 
-      <details class="add" id="addbox" open>
-        <summary id="formTitle">إضافة وكالة جديدة</summary>
-        <form id="form" autocomplete="off">
-          <div class="field">
-            <label for="ar">اسم الوكالة بالعربية</label>
-            <input type="text" id="ar" placeholder="مثال: وكالة الخرطوم للسفر">
-          </div>
-          <div class="field">
-            <label for="en">اسم الوكالة بالإنجليزية</label>
-            <input type="text" id="en" class="ltr" placeholder="e.g. Khartoum Travel Agency">
-          </div>
-          <div class="field full">
-            <label for="aid">معرف الوكالة (ID - أرقام فقط)</label>
-            <input type="text" id="aid" class="ltr mono" placeholder="مثال: 1045" inputmode="numeric" pattern="[0-9]*"
-              autocomplete="off" spellcheck="false">
-          </div>
-          <p class="msg" id="msg" role="alert"></p>
-          <div class="actions">
-            <button type="submit" class="btn-primary" id="save">حفظ البيانات</button>
-            <button type="button" class="btn-ghost" id="cancel" hidden>إلغاء التعديل</button>
-          </div>
-        </form>
-      </details>
+      <!-- تبويب الوكالات -->
+      <div id="viewAgencies" class="stack" role="tabpanel" aria-labelledby="tabAgencies">
+        <details class="add" id="addbox" open>
+          <summary id="formTitle">إضافة وكالة جديدة</summary>
+          <form id="form" autocomplete="off">
+            <div class="field">
+              <label for="ar">اسم الوكالة بالعربية</label>
+              <input type="text" id="ar" placeholder="مثال: وكالة الخرطوم للسفر">
+            </div>
+            <div class="field">
+              <label for="en">اسم الوكالة بالإنجليزية</label>
+              <input type="text" id="en" class="ltr" placeholder="e.g. Khartoum Travel Agency">
+            </div>
+            <div class="field full">
+              <label for="aid">معرف الوكالة (ID - أرقام فقط)</label>
+              <input type="text" id="aid" class="ltr mono" placeholder="مثال: 1045" inputmode="numeric" pattern="[0-9]*"
+                autocomplete="off" spellcheck="false">
+            </div>
+            <p class="msg" id="msg" role="alert"></p>
+            <div class="actions">
+              <button type="submit" class="btn-primary" id="save">حفظ البيانات</button>
+              <button type="button" class="btn-ghost" id="cancel" hidden>إلغاء التعديل</button>
+            </div>
+          </form>
+        </details>
 
-      <ul class="list" id="list"></ul>
+        <ul class="list" id="list"></ul>
+      </div>
+
+      <!-- تبويب سجل التغذيات -->
+      <div id="viewHistory" class="stack" role="tabpanel" aria-labelledby="tabHistory" hidden>
+        <div class="histbar">
+          <label for="range" class="sr">الفترة</label>
+          <select id="range" aria-label="تصفية حسب الفترة">
+            <option value="today">اليوم</option>
+            <option value="7">آخر 7 أيام</option>
+            <option value="all">كل التغذيات</option>
+          </select>
+          <p class="summary" id="histSummary" aria-live="polite"></p>
+        </div>
+        <ul class="list" id="hist"></ul>
+      </div>
+
     </section>
 
     <!-- في حال عدم توفر إعدادات Firebase -->
     <section id="setup" class="card" hidden>
       <h1>إعدادات Firebase غير مكتملة</h1>
-      <p>يُرجى التحقق من ملف <code>firebase-config.js</code> ووضع بيانات المشروع من Firebase Console، ثم تحديث الصفحة.
-      </p>
+      <p>يُرجى التحقق من ملف <code>firebase-config.js</code> ووضع بيانات المشروع من Firebase Console، ثم تحديث الصفحة.</p>
     </section>
 
   </main>
+
+  <!-- نافذة التغذية -->
+  <dialog id="dlg" aria-labelledby="dlgTitle">
+    <form id="topupForm" class="dlg-form" autocomplete="off">
+      <h2 id="dlgTitle">تغذية رصيد وكالة</h2>
+      <div class="dlg-agency">
+        <div class="names">
+          <span class="ar" id="dlgAr"></span>
+          <span class="sep">-</span>
+          <span class="en" id="dlgEn"></span>
+        </div>
+        <span class="idchip" id="dlgId"></span>
+      </div>
+      <div class="field">
+        <label for="amount">المبلغ المطلوب تغذيته (ريال)</label>
+        <input type="text" id="amount" class="ltr mono" inputmode="decimal" autocomplete="off" placeholder="مثال: 10000">
+      </div>
+      <div class="field">
+        <label for="tnote">ملاحظة داخلية (اختياري، لا تُرسل للجروب)</label>
+        <input type="text" id="tnote" placeholder="رقم الإيصال أو اسم المسدد">
+      </div>
+      <div class="preview">
+        <span class="lbl">معاينة الرسالة للجروب:</span>
+        <p id="dlgPreview"></p>
+      </div>
+      <p class="warn-inline" id="dupWarn" hidden></p>
+      <p class="msg" id="dlgMsg" role="alert"></p>
+      <div class="actions">
+        <button type="submit" class="btn-primary" id="dlgConfirm">تمت التغذية، أرسل للجروب</button>
+        <button type="button" class="btn-ghost" id="dlgCancel">إلغاء</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
   <script type="module" src="app.js"></script>
 </body>
 

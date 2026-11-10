@@ -2,6 +2,20 @@ import { firebaseConfig } from "./firebase-config.js";
 
 const $ = (id) => document.getElementById(id);
 
+/* ===== إعدادات التغذية والبوت ===== */
+const CURRENCY = "ريال";
+const buildMessage = (amount, agencyName) => `تم تغذية مبلغ ${amount} ${CURRENCY} لوكالة ${agencyName}`;
+const DUP_WINDOW_MS = 15 * 60 * 1000;   // تحذير في حال تكرار نفس الوكالة ونفس المبلغ خلال 15 دقيقة
+const BOT_STALE_MS = 3 * 60 * 1000;     // يُعتبر البوت منقطعاً بعد 3 دقائق دون نبض
+const MAX_PINNED = 5;                   // الحد الأقصى للوكالات المثبتة
+
+const STATUS = {
+  pending: { text: "في الانتظار", cls: "pending" },
+  sending: { text: "جاري الإرسال...", cls: "pending" },
+  sent: { text: "أُرسلت للجروب ✓", cls: "sent" },
+  failed: { text: "فشل الإرسال", cls: "failed" },
+};
+
 if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("YOUR_")) {
   $("setup").hidden = false;
   $("app").hidden = true;
@@ -19,21 +33,32 @@ async function start() {
   const {
     initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
     collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
+    query, orderBy, limit,
   } = fsMod;
 
   const app = initializeApp(firebaseConfig);
   const db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   });
-  const col = collection(db, "agencies");
 
-  let items = [];
-  let query = "";
+  const agenciesCol = collection(db, "agencies");
+  const topupsCol = collection(db, "topups");
+  const topupsQ = query(topupsCol, orderBy("createdAt", "desc"), limit(1000));
+  const botDoc = doc(db, "system", "bot");
+
+  let items = [];            // قائمة الوكالات
+  let topups = [];           // قائمة التغذيات (الأحدث أولاً)
+  let term = "";             // نص البحث المشترك
+  let currentView = "agencies"; // "agencies" | "history"
   let editingId = null;
   let armedId = null;
   let armTimer = null;
-  let loaded = false;
+  let agenciesLoaded = false;
+  let topupsLoaded = false;
   let firstSnap = true;
+  let botSeen;               // undefined = لم يُحمّل بعد، 0 = لا توجد وثيقة، غير ذلك = توقيت آخر نبض
+  let botWa = null;
+  let toastTimer = null;
   const expandedIds = new Set();
 
   /* ---------- دوال مساعدة ---------- */
@@ -43,7 +68,25 @@ async function start() {
       .replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
       .replace(/\s+/g, " ").trim();
 
+  const fmtNum = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const two = (n) => String(n).padStart(2, "0");
+  const fmtWhen = (ms) => {
+    if (!ms) return "";
+    const d = new Date(ms);
+    return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}`;
+  };
+
+  const agencyName = (a) => a.ar || a.en || a.id || "الوكالة";
+
   const showNote = (t) => { const n = $("note"); n.textContent = t || ""; n.hidden = !t; };
+
+  function toast(t) {
+    const x = $("toast");
+    x.textContent = t;
+    x.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { x.hidden = true; }, 3500);
+  }
 
   function copyText(text) {
     return new Promise((resolve, reject) => {
@@ -71,11 +114,41 @@ async function start() {
     return "حدث خطأ أثناء تنفيذ العملية، يُرجى المحاولة مرة أخرى.";
   };
 
-  /* ---------- عرض البيانات (Render) ---------- */
-  function render() {
+  function parseAmount(s) {
+    const t = String(s || "")
+      .replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 1632))
+      .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 1776))
+      .replace(/٫/g, ".")
+      .replace(/[,٬،\s]/g, "");
+    if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
+    const n = Number(t);
+    return n > 0 && n <= 10000000 ? n : null;
+  }
+
+  /* ---------- فحص حالة البوت والواتساب ---------- */
+  function checkBotHealth() {
+    const note = $("botNote");
+    if (!note) return;
+    if (botSeen === undefined) { note.hidden = true; return; }
+    if (botSeen === 0 || Date.now() - botSeen > BOT_STALE_MS) {
+      note.textContent = "⚠️ تنبيه: بوت واتساب متوقف أو السيرفر غير متصل. التغذيات الجديدة ستُحفظ في السجل وتُرسل تلقائياً للجروب عند عودة تشغيل البوت.";
+      note.hidden = false;
+      return;
+    }
+    if (botWa === "closed") {
+      note.textContent = "⚠️ تنبيه: واتساب مفصول في سيرفر البوت. يُرجى إعادة مسح الباركود أو ربط الرقم عبر السيرفر.";
+      note.hidden = false;
+      return;
+    }
+    note.hidden = true;
+  }
+  setInterval(checkBotHealth, 30000);
+
+  /* ---------- عرض الوكالات (Agencies Render) ---------- */
+  function renderAgencies() {
     const list = $("list");
     list.textContent = "";
-    const nq = norm(query);
+    const nq = norm(term);
     const shown = items.filter((it) =>
       !nq || norm(it.ar).includes(nq) || norm(it.en).includes(nq) || norm(it.id).includes(nq));
 
@@ -88,7 +161,7 @@ async function start() {
     });
 
     const pinnedCount = items.filter((i) => i.pinned).length;
-    if (!loaded) {
+    if (!agenciesLoaded) {
       $("count").textContent = "جارٍ التحميل...";
     } else if (nq) {
       $("count").textContent = `عرض ${shown.length} من أصل ${items.length} وكالة`;
@@ -100,14 +173,12 @@ async function start() {
     if (!shown.length) {
       const e = document.createElement("li");
       e.className = "empty";
-      
       const iconWrap = document.createElement("div");
       iconWrap.className = "empty-icon";
       iconWrap.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`;
-
       const s = document.createElement("strong");
       const p = document.createElement("span");
-      if (!loaded) {
+      if (!agenciesLoaded) {
         s.textContent = "جارٍ تحميل قائمة الوكالات...";
         p.textContent = "يُرجى الانتظار لحظات للاتصال بقاعدة البيانات.";
       } else if (!items.length) {
@@ -212,7 +283,7 @@ async function start() {
       const expBtn = document.createElement("button");
       expBtn.type = "button";
       expBtn.className = "expand-btn";
-      expBtn.setAttribute("aria-label", isExpanded ? "تصغير البطاقة" : "تكبير وإظهار التعديل/الحذف");
+      expBtn.setAttribute("aria-label", isExpanded ? "تصغير البطاقة" : "تكبير وإظهار الخيارات");
       expBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
       expBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -225,6 +296,17 @@ async function start() {
       const tools = document.createElement("div");
       tools.className = "tools";
 
+      // 1. زر التغذية
+      const tb = document.createElement("button");
+      tb.type = "button";
+      tb.className = "btn-topup";
+      tb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span>تغذية</span>`;
+      tb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openTopup(it);
+      });
+
+      // 2. زر التثبيت
       const pb = document.createElement("button");
       pb.type = "button";
       pb.className = "btn-pin" + (isPinned ? " is-pinned" : "");
@@ -236,6 +318,7 @@ async function start() {
         togglePin(it);
       });
 
+      // 3. زر التعديل
       const eb = document.createElement("button");
       eb.type = "button";
       eb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>تعديل</span>`;
@@ -243,6 +326,8 @@ async function start() {
         e.stopPropagation();
         startEdit(it);
       });
+
+      // 4. زر الحذف
       const db_ = document.createElement("button");
       db_.type = "button";
       db_.className = "danger" + (armedId === it._id ? " armed" : "");
@@ -253,7 +338,8 @@ async function start() {
         e.stopPropagation();
         onDelete(it);
       });
-      tools.append(pb, eb, db_);
+
+      tools.append(tb, pb, eb, db_);
       li.appendChild(tools);
 
       list.appendChild(li);
@@ -265,8 +351,8 @@ async function start() {
     const isPinned = Boolean(it.pinned);
     if (!isPinned) {
       const currentPinned = items.filter((x) => x.pinned).length;
-      if (currentPinned >= 5) {
-        showNote("⚠️ تنبيه: تم الوصول للحد الأقصى (5 وكالات مثبتة). يُرجى إلغاء تثبيت إحدى الوكالات أولاً لتتمكن من تثبيت غيرها.");
+      if (currentPinned >= MAX_PINNED) {
+        showNote(`⚠️ تنبيه: تم الوصول للحد الأقصى (${MAX_PINNED} وكالات مثبتة). يُرجى إلغاء تثبيت إحدى الوكالات أولاً لتتمكن من تثبيت غيرها.`);
         setTimeout(() => showNote(""), 5000);
         return;
       }
@@ -302,8 +388,8 @@ async function start() {
       armedId = it._id;
       expandedIds.add(it._id);
       clearTimeout(armTimer);
-      armTimer = setTimeout(() => { armedId = null; render(); }, 3500);
-      render();
+      armTimer = setTimeout(() => { armedId = null; renderAgencies(); }, 3500);
+      renderAgencies();
       return;
     }
     armedId = null; clearTimeout(armTimer);
@@ -311,10 +397,299 @@ async function start() {
     deleteDoc(doc(db, "agencies", it._id)).then(
       () => { if (editingId === it._id) resetForm(); },
       (e) => showNote(errText(e)));
-    render();
+    renderAgencies();
   }
 
-  $("q").addEventListener("input", (e) => { query = e.target.value; render(); });
+  /* ---------- نافذة التغذية (Topup Dialog) ---------- */
+  let dlgAgency = null;
+  let dupAck = false;
+  let savingTopup = false;
+
+  function updatePreview() {
+    if (!dlgAgency) return;
+    const amt = parseAmount($("amount").value);
+    const amtFormatted = amt === null ? "…" : fmtNum(amt);
+    $("dlgPreview").textContent = buildMessage(amtFormatted, agencyName(dlgAgency));
+  }
+
+  function resetDup() {
+    dupAck = false;
+    $("dupWarn").hidden = true;
+    $("dlgConfirm").textContent = "تمت التغذية، أرسل للجروب";
+  }
+
+  function openTopup(it) {
+    dlgAgency = it;
+    $("dlgAr").textContent = it.ar || "";
+    $("dlgEn").textContent = it.en || "";
+    $("dlgId").textContent = it.id || "";
+    $("amount").value = "";
+    $("tnote").value = "";
+    $("dlgMsg").textContent = "";
+    resetDup();
+    updatePreview();
+    $("dlg").showModal();
+    $("amount").focus();
+  }
+
+  $("amount").addEventListener("input", () => {
+    resetDup();
+    updatePreview();
+  });
+
+  $("dlgCancel").addEventListener("click", () => $("dlg").close());
+
+  $("topupForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (savingTopup || !dlgAgency) return;
+    const msg = $("dlgMsg");
+    msg.textContent = "";
+    const amount = parseAmount($("amount").value);
+    if (amount === null) {
+      msg.textContent = "يُرجى كتابة مبلغ صحيح أكبر من صفر بالأرقام.";
+      $("amount").focus();
+      return;
+    }
+
+    const a = dlgAgency;
+
+    // فحص منع التكرار (خلال 15 دقيقة)
+    const recent = topups.find((t) => t.agencyId === a._id && t.amount === amount && (Date.now() - t.time < DUP_WINDOW_MS));
+    if (recent && !dupAck) {
+      dupAck = true;
+      const mins = Math.max(1, Math.round((Date.now() - recent.time) / 60000));
+      const w = $("dupWarn");
+      w.textContent = `⚠️ تنبيه تكرار: توجد تغذية مسجلة بنفس المبلغ (${fmtNum(amount)} ${CURRENCY}) لنفس الوكالة قبل ${mins} دقيقة. إذا كانت هذه تغذية جديدة منفصلة، اضغط زر التأكيد أدناه للمتابعة.`;
+      w.hidden = false;
+      $("dlgConfirm").textContent = "تأكيد وإرسال للجروب رغم التكرار";
+      return;
+    }
+
+    savingTopup = true;
+    $("dlgConfirm").disabled = true;
+    const slowTimer = setTimeout(() => {
+      msg.textContent = "الاتصال بطيء. البيانات محفوظة محلياً وستُرفع تلقائياً عند استقرار النت. لا تضغط مجدداً.";
+    }, 8000);
+
+    try {
+      await addDoc(topupsCol, {
+        agencyId: a._id,
+        agencyAr: a.ar || "",
+        agencyEn: a.en || "",
+        agencyCode: a.id,
+        amount,
+        currency: CURRENCY,
+        note: $("tnote").value.trim(),
+        message: buildMessage(fmtNum(amount), agencyName(a)),
+        createdAt: serverTimestamp(),
+        createdBy: "web",
+        notify: { status: "pending" },
+      });
+      $("dlg").close();
+      toast(`✓ تمت تغذية ${agencyName(a)} بمبلغ ${fmtNum(amount)} ${CURRENCY} وجارٍ إرسالها للجروب.`);
+    } catch (e) {
+      msg.textContent = errText(e);
+    }
+
+    clearTimeout(slowTimer);
+    savingTopup = false;
+    $("dlgConfirm").disabled = false;
+  });
+
+  /* ---------- سجل التغذيات (History View) ---------- */
+  function getFilteredTopups() {
+    const nq = norm(term);
+    const range = $("range").value;
+    let since = 0;
+    if (range === "today") {
+      const now = new Date();
+      since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    } else if (range === "7") {
+      since = Date.now() - 7 * 86400000;
+    }
+
+    return topups.filter((t) => {
+      if (t.time < since) return false;
+      if (!nq) return true;
+      return norm(t.agencyAr).includes(nq) ||
+             norm(t.agencyEn).includes(nq) ||
+             norm(t.agencyCode).includes(nq) ||
+             norm(t.note).includes(nq);
+    });
+  }
+
+  async function retryTopup(t) {
+    try {
+      await updateDoc(doc(db, "topups", t._id), { notify: { status: "pending" } });
+      toast("تمت إعادة جدولة الرسالة للبوت ✓");
+    } catch (e) {
+      showNote(errText(e));
+    }
+  }
+
+  function renderHistory() {
+    const ul = $("hist");
+    ul.textContent = "";
+    const rows = getFilteredTopups();
+    const total = rows.reduce((s, t) => s + (t.amount || 0), 0);
+
+    $("histSummary").textContent = topupsLoaded && rows.length
+      ? `${rows.length} تغذية · المجموع: ${fmtNum(total)} ${CURRENCY}`
+      : "";
+
+    if (!rows.length) {
+      const e = document.createElement("li");
+      e.className = "empty";
+      const iconWrap = document.createElement("div");
+      iconWrap.className = "empty-icon";
+      iconWrap.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+      const s = document.createElement("strong");
+      const p = document.createElement("span");
+      if (!topupsLoaded) {
+        s.textContent = "جارٍ تحميل سجل التغذيات...";
+        p.textContent = "يُرجى الانتظار لحظات للاتصال بقاعدة البيانات.";
+      } else if (!topups.length) {
+        s.textContent = "لا توجد تغذيات مسجلة حتى الآن";
+        p.textContent = "ستظهر هنا جميع التغذيات بعد تنفيذ أول تغذية من تبويب الوكالات.";
+      } else {
+        s.textContent = "لا توجد نتائج مطابقة في هذه الفترة";
+        p.textContent = "جرّب تغيير فلتر الفترة أو كلمة البحث.";
+      }
+      e.append(iconWrap, s, p);
+      ul.appendChild(e);
+      return;
+    }
+
+    for (const t of rows) {
+      const li = document.createElement("li");
+      li.className = "row hrow";
+
+      const names = document.createElement("div");
+      names.className = "names";
+
+      const titleWrap = document.createElement("div");
+      titleWrap.style.display = "flex";
+      titleWrap.style.alignItems = "baseline";
+      titleWrap.style.gap = "8px";
+      titleWrap.style.flexWrap = "wrap";
+
+      if (t.agencyAr) {
+        const ar = document.createElement("span");
+        ar.className = "ar";
+        ar.textContent = t.agencyAr;
+        titleWrap.appendChild(ar);
+      }
+      if (t.agencyAr && t.agencyEn) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "-";
+        titleWrap.appendChild(sep);
+      }
+      if (t.agencyEn) {
+        const en = document.createElement("span");
+        en.className = "en";
+        en.textContent = t.agencyEn;
+        titleWrap.appendChild(en);
+      }
+      if (t.agencyCode) {
+        const c = document.createElement("span");
+        c.className = "idchip";
+        c.style.padding = "2px 8px";
+        c.style.fontSize = "0.8rem";
+        c.textContent = t.agencyCode;
+        titleWrap.appendChild(c);
+      }
+      names.appendChild(titleWrap);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = fmtWhen(t.time) + (t.note ? ` · ${t.note}` : "");
+      names.appendChild(meta);
+
+      li.appendChild(names);
+
+      const amtBox = document.createElement("div");
+      amtBox.className = "amtbox";
+      const amtSpan = document.createElement("span");
+      amtSpan.className = "amt";
+      amtSpan.textContent = fmtNum(t.amount);
+      const curSpan = document.createElement("span");
+      curSpan.className = "cur";
+      curSpan.textContent = CURRENCY;
+      amtBox.append(amtSpan, curSpan);
+      li.appendChild(amtBox);
+
+      const st = STATUS[t.status] || STATUS.pending;
+      const foot = document.createElement("div");
+      foot.className = "tools";
+      foot.style.display = "flex";
+
+      const chip = document.createElement("span");
+      chip.className = "chip " + st.cls;
+      chip.textContent = st.text;
+      foot.appendChild(chip);
+
+      if (t.status === "failed" && t.error) {
+        const err = document.createElement("span");
+        err.className = "err";
+        err.textContent = `السبب: ${t.error}`;
+        foot.appendChild(err);
+      }
+
+      // زر نسخ الرسالة
+      const cp = document.createElement("button");
+      cp.type = "button";
+      cp.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><span>نسخ الرسالة</span>`;
+      cp.addEventListener("click", () => {
+        copyText(t.message).then(
+          () => toast("تم نسخ نص الرسالة للحافظة ✓"),
+          () => toast("تعذر النسخ التلقائي")
+        );
+      });
+      foot.appendChild(cp);
+
+      // زر إعادة المحاولة في حال الفشل
+      if (t.status === "failed") {
+        const rb = document.createElement("button");
+        rb.type = "button";
+        rb.style.color = "var(--accent)";
+        rb.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg><span>إعادة المحاولة</span>`;
+        rb.addEventListener("click", () => retryTopup(t));
+        foot.appendChild(rb);
+      }
+
+      li.appendChild(foot);
+      ul.appendChild(li);
+    }
+  }
+
+  $("range").addEventListener("change", renderHistory);
+
+  /* ---------- التبديل بين التبويبات والبحث ---------- */
+  function switchTab(viewName) {
+    currentView = viewName;
+    const isAgencies = viewName === "agencies";
+    $("tabAgencies").setAttribute("aria-selected", isAgencies ? "true" : "false");
+    $("tabHistory").setAttribute("aria-selected", isAgencies ? "false" : "true");
+    $("viewAgencies").hidden = !isAgencies;
+    $("viewHistory").hidden = isAgencies;
+    $("q").placeholder = isAgencies
+      ? "ابحث باسم الوكالة بالعربية أو الإنجليزية أو المعرف (ID)..."
+      : "ابحث في سجل التغذيات بالاسم أو المعرف أو الملاحظة...";
+
+    if (isAgencies) renderAgencies();
+    else renderHistory();
+  }
+
+  $("tabAgencies").addEventListener("click", () => switchTab("agencies"));
+  $("tabHistory").addEventListener("click", () => switchTab("history"));
+
+  $("q").addEventListener("input", (e) => {
+    term = e.target.value;
+    if (currentView === "agencies") renderAgencies();
+    else renderHistory();
+  });
+
   $("cancel").addEventListener("click", resetForm);
 
   // التحقق الفوري أثناء كتابة معرف الوكالة
@@ -364,17 +739,24 @@ async function start() {
     const btn = $("save"); btn.disabled = true;
     try {
       if (editingId) await updateDoc(doc(db, "agencies", editingId), { ar, en, id });
-      else await addDoc(col, { ar, en, id, createdAt: serverTimestamp() });
+      else await addDoc(agenciesCol, { ar, en, id, createdAt: serverTimestamp() });
       resetForm(); $("ar").focus();
     } catch (e) { msg.textContent = errText(e); }
     btn.disabled = false;
   });
 
-  /* ---------- الاستماع المباشر لقاعدة البيانات ---------- */
+  /* ---------- الاستماع المباشر لقاعدة البيانات (Realtime Listeners) ---------- */
   function listen() {
-    loaded = false; firstSnap = true; render();
+    agenciesLoaded = false;
+    topupsLoaded = false;
+    firstSnap = true;
+    renderAgencies();
+    renderHistory();
+
     const timer = setTimeout(() => showNote("تعذر تحديث البيانات من الخادم، قد تكون القائمة الحالية غير مكتملة."), 10000);
-    onSnapshot(col, (snap) => {
+
+    // 1. الوكالات
+    onSnapshot(agenciesCol, (snap) => {
       items = snap.docs.map((d) => {
         const x = d.data();
         return {
@@ -385,14 +767,57 @@ async function start() {
           pinned: Boolean(x.pinned),
         };
       });
-      loaded = true;
+      agenciesLoaded = true;
       if (!snap.metadata.fromCache) { clearTimeout(timer); showNote(""); }
       if (firstSnap && items.length) $("addbox").open = false;
       firstSnap = false;
-      render();
+      renderAgencies();
     }, (e) => {
-      clearTimeout(timer); loaded = true;
-      showNote(errText(e)); render();
+      clearTimeout(timer); agenciesLoaded = true;
+      showNote(errText(e)); renderAgencies();
+    });
+
+    // 2. التغذيات
+    onSnapshot(topupsQ, (snap) => {
+      topups = snap.docs.map((d) => {
+        const x = d.data();
+        const t = x.createdAt?.toMillis?.() || Date.now();
+        return {
+          _id: d.id,
+          agencyId: x.agencyId,
+          agencyAr: x.agencyAr || "",
+          agencyEn: x.agencyEn || "",
+          agencyCode: x.agencyCode || "",
+          amount: x.amount || 0,
+          currency: x.currency || CURRENCY,
+          note: x.note || "",
+          message: x.message || "",
+          time: t,
+          status: x.notify?.status || "pending",
+          error: x.notify?.error || null,
+        };
+      });
+      topupsLoaded = true;
+      renderHistory();
+    }, (e) => {
+      console.error("خطأ في تحميل التغذيات:", e);
+      topupsLoaded = true;
+      renderHistory();
+    });
+
+    // 3. نبض البوت
+    onSnapshot(botDoc, (snap) => {
+      if (!snap.exists()) {
+        botSeen = 0;
+        botWa = null;
+      } else {
+        const x = snap.data();
+        botSeen = x.lastSeen?.toMillis?.() || 0;
+        botWa = x.whatsapp || null;
+      }
+      checkBotHealth();
+    }, (e) => {
+      console.error("خطأ في قراءة نبض البوت:", e);
     });
   }
 
