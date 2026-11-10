@@ -2,46 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function validAgency() {
-      let d = request.resource.data;
-      return d.id is string && d.id.size() > 0 && d.id.size() <= 100
-        && d.id.matches('^[0-9]+$')
-        && d.ar is string && d.ar.size() <= 200
-        && d.en is string && d.en.size() <= 200
-        && (!('pinned' in d) || d.pinned is bool);
-    }
-
-    function validTopup() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['agencyId', 'agencyAr', 'agencyEn', 'agencyCode', 'amount', 'currency',
-                               'note', 'message', 'createdAt', 'createdBy', 'notify'])
-        && d.keys().hasAll(['agencyId', 'agencyAr', 'agencyEn', 'agencyCode', 'amount', 'currency',
-                            'note', 'message', 'createdAt', 'createdBy', 'notify'])
-        && d.agencyId is string && d.agencyAr is string && d.agencyEn is string && d.agencyCode is string
-        && d.amount is number && d.amount > 0 && d.amount <= 10000000
-        && d.currency is string
-        && d.note is string && d.note.size() <= 300
-        && d.message is string && d.message.size() > 0 && d.message.size() <= 500
-        && d.createdAt == request.time
-        && d.notify == {'status': 'pending'};
-    }
-
+    // 1. الوكالات: قراءة وإضافة وتعديل وحذف متاح للجميع
     match /agencies/{docId} {
-      allow read, delete: if true;
-      allow create, update: if validAgency();
+      allow read, write: if true;
     }
 
-    // سجل التغذيات: القراءة متاحة، والإضافة بصيغة صحيحة، وتحديث الحالة فقط لإعادة المحاولة عند الفشل
+    // 2. سجل التغذيات: القراءة والإضافة متاحة، والتعديل لإعادة المحاولة، والحذف ممنوع لحماية السجل
     match /topups/{docId} {
-      allow read: if true;
-      allow create: if validTopup();
-      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notify'])
-        && resource.data.notify.status == 'failed'
-        && request.resource.data.notify == {'status': 'pending'};
+      allow read, create, update: if true;
       allow delete: if false;
     }
 
-    // نبض البوت: القراءة فقط من الموقع للتأكد من الاتصال، والكتابة من البوت بصلاحيات Admin SDK
+    // 3. حالة اتصال البوت: القراءة فقط مسموحة للموقع، والكتابة من البوت بسيرفر السيرفر (Admin SDK)
     match /system/{docId} {
       allow read: if true;
       allow write: if false;
